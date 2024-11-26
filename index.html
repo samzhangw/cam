@@ -1,0 +1,607 @@
+<html><head><base href="." />
+<meta charset="utf-8">
+<title>AI 疲勞駕駛偵測系統</title>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.11.0"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/blazeface@0.0.7"></script>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/face-landmarks-detection@0.0.3"></script>
+
+<style>
+body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background: #f0f0f0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.container {
+    position: relative;
+    margin: 20px;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 0 10px rgba(0,0,0,0.2);
+}
+
+#videoElement {
+    width: 640px;
+    height: 480px;
+    background-color: #666;
+}
+
+#overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 640px;
+    height: 480px;
+}
+
+.status {
+    margin-top: 20px;
+    padding: 10px 20px;
+    border-radius: 5px;
+    font-weight: bold;
+}
+
+.alert {
+    background-color: #ff4444;
+    color: white;
+    display: none;
+    padding: 20px;
+    border-radius: 10px;
+    margin-top: 20px;
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0% { opacity: 1; }
+    50% { opacity: 0.5; }
+    100% { opacity: 1; }
+}
+
+.controls {
+    margin-top: 20px;
+}
+
+button {
+    padding: 10px 20px;
+    font-size: 16px;
+    border: none;
+    border-radius: 5px;
+    background: #4CAF50;
+    color: white;
+    cursor: pointer;
+    transition: background 0.3s;
+}
+
+button:hover {
+    background: #45a049;
+}
+
+.stats {
+    margin-top: 20px;
+    padding: 10px;
+    background: white;
+    border-radius: 5px;
+    width: 300px;
+}
+
+.fatigue-level {
+    margin-top: 10px;
+    padding: 15px;
+    border-radius: 5px;
+    background: #fff;
+    border-left: 5px solid #4CAF50;
+}
+
+.detection-display {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    background: rgba(0, 0, 0, 0.7);
+    color: white;
+    padding: 10px;
+    border-radius: 5px;
+    font-size: 14px;
+}
+
+.landmark-label {
+    position: absolute;
+    background: rgba(255, 255, 255, 0.8);
+    padding: 2px 5px;
+    border-radius: 3px;
+    font-size: 12px;
+    pointer-events: none;
+}
+
+.status-bar {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 20px;
+    padding: 10px;
+    background: white;
+    border-radius: 5px;
+    width: 100%;
+    max-width: 640px;
+}
+
+.status-item {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.status-item span {
+    padding: 3px 8px;
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+.status-item span.connected {
+    background: #4CAF50;
+    color: white;
+}
+
+.status-item span.disconnected {
+    background: #ff4444;
+    color: white;
+}
+
+.loading-indicator {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    background: rgba(0,0,0,0.8);
+    padding: 20px;
+    border-radius: 10px;
+    color: white;
+    text-align: center;
+    display: none;
+}
+
+.spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #3498db;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin: 0 auto 10px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.device-selection {
+    margin: 10px 0;
+    width: 100%;
+    max-width: 640px;
+}
+
+.camera-select {
+    width: 100%;
+    padding: 8px;
+    border-radius: 5px;
+    border: 1px solid #ddd;
+}
+
+.export-button {
+    background: #2196F3;
+    margin-left: 10px;
+}
+
+.log-container {
+    margin-top: 20px;
+    width: 100%;
+    max-width: 640px;
+    background: white;
+    padding: 10px;
+    border-radius: 5px;
+    max-height: 200px;
+    overflow-y: auto;
+}
+
+.log-entry {
+    padding: 5px;
+    border-bottom: 1px solid #eee;
+    font-size: 14px;
+}
+</style>
+</head>
+<body>
+    <h1>AI 疲勞駕駛偵測系統</h1>
+    <div id="statusBar" class="status-bar">
+        <div id="connectionStatus" class="status-item">連線狀態: <span>待機中</span></div>
+        <div id="modelStatus" class="status-item">AI模型: <span>未載入</span></div>
+    </div>
+
+    <div id="deviceSelection" class="device-selection">
+        <select id="cameraSelect" class="camera-select">
+            <option value="">選擇攝像頭...</option>
+        </select>
+    </div>
+
+    <div id="loadingIndicator" class="loading-indicator">
+        <div class="spinner"></div>
+        <div class="loading-text">載入中...</div>
+    </div>
+
+    <div class="container">
+        <video id="videoElement" autoplay playsinline></video>
+        <canvas id="overlay"></canvas>
+        <div class="detection-display" id="detectionInfo">
+            <div>眼睛狀態: <span id="eyeStatus">偵測中...</span></div>
+            <div>嘴巴狀態: <span id="mouthStatus">偵測中...</span></div>
+            <div>頭部姿態: <span id="headStatus">偵測中...</span></div>
+        </div>
+    </div>
+    <div class="alert" id="alertBox">警告：檢測到疲勞狀態！請立即休息！</div>
+    <div class="stats">
+        <p>眨眼頻率: <span id="blinkRate">0</span> 次/分鐘</p>
+        <p>打哈欠次數: <span id="yawnCount">0</span> 次</p>
+        <p>頭部傾斜角度: <span id="headAngle">0</span>°</p>
+        <p>專注度評分: <span id="attentionScore">100</span>%</p>
+    </div>
+    <div class="fatigue-level">
+        疲勞程度: <span id="fatigueLevel">正常</span>
+    </div>
+    <div class="controls">
+        <button onclick="startDetection()">開始偵測</button>
+    </div>
+
+<script>
+let isRunning = false;
+let reconnectAttempts = 0;
+let detectionLogs = [];
+let audioContext;
+let alertSound;
+
+let video = document.getElementById('videoElement');
+let canvas = document.getElementById('overlay');
+let ctx = canvas.getContext('2d');
+let model;
+let faceLandmarksModel;
+let blinkCount = 0;
+let yawnCount = 0;
+let lastBlink = Date.now();
+let isEyesClosed = false;
+let alertTimeout;
+let attentionScore = 100;
+let lastYawnCheck = Date.now();
+let lastHeadPose = null;
+
+canvas.width = 640;
+canvas.height = 480;
+
+async function loadModels() {
+    try {
+        model = await blazeface.load();
+        faceLandmarksModel = await faceLandmarksDetection.load(
+            faceLandmarksDetection.SupportedPackages.mediapipeFacemesh
+        );
+        return true;
+    } catch (error) {
+        console.error('模型載入失敗:', error);
+        return false;
+    }
+}
+
+async function initializeAudio() {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    try {
+        const response = await fetch('https://cdn.freesound.org/previews/703/703472_12552699-lq.mp3');
+        const arrayBuffer = await response.arrayBuffer();
+        alertSound = await audioContext.decodeAudioData(arrayBuffer);
+    } catch (error) {
+        console.error('Error loading alert sound:', error);
+    }
+}
+
+function playAlertSound() {
+    if (audioContext && alertSound) {
+        const source = audioContext.createBufferSource();
+        source.buffer = alertSound;
+        source.connect(audioContext.destination);
+        source.start(0);
+    }
+}
+
+async function startDetection() {
+    showLoading(true);
+    try {
+        await initializeAudio();
+        const modelsLoaded = await loadModels();
+        if (!modelsLoaded) {
+            throw new Error('AI模型載入失敗');
+        }
+        updateStatus('modelStatus', '已載入', true);
+
+        await setupCamera();
+        isRunning = true;
+        reconnectAttempts = 0;
+        detectFrame();
+        updateStatus('connectionStatus', '已連接', true);
+    } catch (error) {
+        console.error('Error:', error);
+        updateStatus('connectionStatus', '連接失敗', false);
+        handleError(error);
+    } finally {
+        showLoading(false);
+    }
+}
+
+function showLoading(show) {
+    document.getElementById('loadingIndicator').style.display = show ? 'block' : 'none';
+}
+
+function updateStatus(elementId, text, isConnected) {
+    const element = document.getElementById(elementId).querySelector('span');
+    element.textContent = text;
+    element.className = isConnected ? 'connected' : 'disconnected';
+}
+
+function handleError(error) {
+    alert(`錯誤: ${error.message}`);
+    logDetectionEvent('錯誤', error.message);
+}
+
+async function setupCamera() {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const videoDevices = devices.filter(device => device.kind === 'videoinput');
+    const select = document.getElementById('cameraSelect');
+    
+    select.innerHTML = '<option value="">選擇攝像頭...</option>';
+    videoDevices.forEach(device => {
+        const option = document.createElement('option');
+        option.value = device.deviceId;
+        option.text = device.label || `Camera ${select.length + 1}`;
+        select.appendChild(option);
+    });
+    
+    select.onchange = async () => {
+        if (select.value) {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { deviceId: select.value }
+            });
+            video.srcObject = stream;
+        }
+    };
+}
+
+async function detectFrame() {
+    try {
+        const faces = await model.estimateFaces(video, false);
+        const faceLandmarks = await faceLandmarksModel.estimateFaces({
+            input: video
+        });
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        if (faces.length > 0 && faceLandmarks.length > 0) {
+            const face = faces[0];
+            const landmarks = faceLandmarks[0].landmarks;
+
+            // 繪製臉部框架和標記點
+            drawFaceBox(face);
+            drawFaceLandmarks(landmarks);
+            
+            // 分析眼睛狀態
+            const eyeState = analyzeEyes(landmarks);
+            
+            // 分析打哈欠
+            const mouthState = analyzeMouth(landmarks);
+            
+            // 分析頭部姿態
+            const headPose = analyzeHeadPose(landmarks);
+            
+            // 更新疲勞度評估
+            updateFatigueLevel(eyeState, mouthState, headPose);
+            
+            // 更新即時偵測顯示
+            updateDetectionDisplay(eyeState, mouthState, headPose);
+        }
+
+        requestAnimationFrame(detectFrame);
+    } catch (error) {
+        console.error('Detection error:', error);
+    }
+}
+
+function drawFaceBox(face) {
+    const start = face.topLeft;
+    const end = face.bottomRight;
+    const size = [end[0] - start[0], end[1] - start[1]];
+    
+    ctx.strokeStyle = '#30ff30';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(start[0], start[1], size[0], size[1]);
+}
+
+function drawFaceLandmarks(landmarks) {
+    ctx.fillStyle = '#00ff00';
+    
+    // 繪製關鍵點
+    landmarks.forEach((point, index) => {
+        if (index % 5 === 0) { // 每5個點畫一個以減少密度
+            ctx.beginPath();
+            ctx.arc(point[0], point[1], 2, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    });
+}
+
+function updateDetectionDisplay(eyeState, mouthState, headPose) {
+    // 更新眼睛狀態
+    const eyeStatus = document.getElementById('eyeStatus');
+    eyeStatus.textContent = isEyesClosed ? '閉眼' : '睜眼';
+    eyeStatus.style.color = isEyesClosed ? '#ff4444' : '#4CAF50';
+
+    // 更新嘴巴狀態
+    const mouthStatus = document.getElementById('mouthStatus');
+    mouthStatus.textContent = mouthState > 30 ? '打哈欠' : '正常';
+    mouthStatus.style.color = mouthState > 30 ? '#ff4444' : '#4CAF50';
+
+    // 更新頭部姿態
+    const headStatus = document.getElementById('headStatus');
+    const headAngle = Math.abs(headPose);
+    if (headAngle > 30) {
+        headStatus.textContent = '頭部傾斜過大';
+        headStatus.style.color = '#ff4444';
+    } else if (headAngle > 15) {
+        headStatus.textContent = '輕微傾斜';
+        headStatus.style.color = '#ffa500';
+    } else {
+        headStatus.textContent = '正常';
+        headStatus.style.color = '#4CAF50';
+    }
+}
+
+function analyzeEyes(landmarks) {
+    const leftEyeUpper = landmarks[159];
+    const leftEyeLower = landmarks[145];
+    const rightEyeUpper = landmarks[386];
+    const rightEyeLower = landmarks[374];
+    
+    const leftEyeDistance = Math.abs(leftEyeUpper[1] - leftEyeLower[1]);
+    const rightEyeDistance = Math.abs(rightEyeUpper[1] - rightEyeLower[1]);
+    
+    const averageEyeDistance = (leftEyeDistance + rightEyeDistance) / 2;
+    
+    if (averageEyeDistance < 5 && !isEyesClosed) {
+        isEyesClosed = true;
+        blinkCount++;
+        document.getElementById('blinkRate').textContent = Math.round(blinkCount / ((Date.now() - lastBlink) / 60000));
+    } else if (averageEyeDistance >= 5) {
+        isEyesClosed = false;
+    }
+    
+    return averageEyeDistance;
+}
+
+function analyzeMouth(landmarks) {
+    const upperLip = landmarks[13];
+    const lowerLip = landmarks[14];
+    const mouthDistance = Math.abs(upperLip[1] - lowerLip[1]);
+    
+    if (mouthDistance > 30 && (Date.now() - lastYawnCheck > 3000)) {
+        yawnCount++;
+        lastYawnCheck = Date.now();
+        document.getElementById('yawnCount').textContent = yawnCount;
+    }
+    
+    return mouthDistance;
+}
+
+function analyzeHeadPose(landmarks) {
+    const leftEye = landmarks[33];
+    const rightEye = landmarks[263];
+    const angle = Math.atan2(rightEye[1] - leftEye[1], rightEye[0] - leftEye[0]) * 180 / Math.PI;
+    
+    document.getElementById('headAngle').textContent = Math.abs(Math.round(angle));
+    
+    return angle;
+}
+
+function updateFatigueLevel(eyeState, mouthState, headPose) {
+    let fatigueScore = 0;
+    
+    const blinkRate = Math.round(blinkCount / ((Date.now() - lastBlink) / 60000));
+    if (blinkRate > 30) fatigueScore += 30;
+    if (blinkRate > 20) fatigueScore += 20;
+    
+    if (yawnCount > 3) fatigueScore += 30;
+    else if (yawnCount > 1) fatigueScore += 15;
+    
+    if (Math.abs(headPose) > 30) fatigueScore += 20;
+    
+    attentionScore = Math.max(0, 100 - fatigueScore);
+    document.getElementById('attentionScore').textContent = attentionScore;
+    
+    const fatigueLevel = document.getElementById('fatigueLevel');
+    if (attentionScore < 50) {
+        fatigueLevel.textContent = '嚴重疲勞';
+        fatigueLevel.style.color = '#ff0000';
+        showFatigueAlert();
+    } else if (attentionScore < 70) {
+        fatigueLevel.textContent = '輕度疲勞';
+        fatigueLevel.style.color = '#ffa500';
+    } else {
+        fatigueLevel.textContent = '正常';
+        fatigueLevel.style.color = '#4CAF50';
+    }
+}
+
+function showFatigueAlert() {
+    document.getElementById('alertBox').style.display = 'block';
+    playAlertSound();
+    logDetectionEvent('警告', '檢測到疲勞狀態');
+    
+    if (alertTimeout) clearTimeout(alertTimeout);
+    alertTimeout = setTimeout(() => {
+        document.getElementById('alertBox').style.display = 'none';
+    }, 5000);
+}
+
+setInterval(() => {
+    lastBlink = Date.now();
+    blinkCount = 0;
+    if (Date.now() - lastYawnCheck > 3600000) {
+        yawnCount = 0;
+        document.getElementById('yawnCount').textContent = 0;
+    }
+}, 60000);
+
+function logDetectionEvent(type, details) {
+    const timestamp = new Date().toLocaleTimeString();
+    const logEntry = { timestamp, type, details };
+    detectionLogs.push(logEntry);
+    
+    // Keep only last 100 logs
+    if (detectionLogs.length > 100) {
+        detectionLogs.shift();
+    }
+    
+    // Update UI if log container exists
+    const logContainer = document.getElementById('logContainer');
+    if (logContainer) {
+        const entry = document.createElement('div');
+        entry.className = 'log-entry';
+        entry.textContent = `${timestamp} - ${type}: ${details}`;
+        logContainer.insertBefore(entry, logContainer.firstChild);
+    }
+}
+
+// Add export functionality
+function exportLogs() {
+    const csv = detectionLogs.map(log => 
+        `${log.timestamp},${log.type},${log.details}`
+    ).join('\n');
+    
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `fatigue_detection_logs_${new Date().toISOString()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+}
+
+// Add auto-recovery
+function autoRecover() {
+    if (!isRunning && reconnectAttempts < 3) {
+        console.log('Attempting to recover detection...');
+        reconnectAttempts++;
+        startDetection();
+    }
+}
+</script>
+
+</body>
+</html>
